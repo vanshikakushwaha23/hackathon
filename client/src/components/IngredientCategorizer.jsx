@@ -1,284 +1,229 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import Tesseract from "tesseract.js";
-import Fuse from "fuse.js";
 
-const curated = [
-  { name: "sodium benzoate", category: "Preservative (Additive)", tags: "preservative, additive", notes: "Common preservative" },
-  { name: "potassium sorbate", category: "Preservative (Additive)", tags: "preservative", notes: "Common preservative" },
-  { name: "monosodium glutamate", category: "Additive (Flavor enhancer)", tags: "MSG, flavor enhancer", notes: "Flavor enhancer" },
-  { name: "aspartame", category: "Artificial sweetener", tags: "artificial sweetener", notes: "Low-calorie sweetener" },
-  { name: "sucralose", category: "Artificial sweetener", tags: "artificial sweetener", notes: "Low-calorie sweetener" },
-  { name: "acesulfame potassium", category: "Artificial sweetener", tags: "artificial sweetener", notes: "Low-calorie sweetener" },
-  { name: "high fructose corn syrup", category: "Added sugar (Processed)", tags: "sweetener, sugar", notes: "Added sugar; processed" },
-  { name: "sugar", category: "Added sugar (Natural/Processed)", tags: "sugar", notes: "Sugar" },
-  { name: "partially hydrogenated oil", category: "Potential TransFat / Regulated", tags: "trans fat suspect", notes: "Potential source of industrial trans fats — verify with regulator" },
-  { name: "palm oil", category: "Oil (vegetable)", tags: "oil", notes: "Vegetable oil" },
-  { name: "soy lecithin", category: "Emulsifier / Natural", tags: "emulsifier", notes: "Emulsifier from soy" },
-  { name: "natural flavour", category: "Natural / Ambiguous", tags: "flavor", notes: "Ambiguous — may be natural or contains additives" },
-  { name: "artificial flavour", category: "Artificial additive", tags: "flavor additive", notes: "Artificial flavouring" },
-];
-
-const fuse = new Fuse(curated, { keys: ["name", "tags"], threshold: 0.35 });
-
-export default function IngredientCategorizer() {
+export default function IngredientCapture() {
   const [image, setImage] = useState(null);
-  const [ocrText, setOcrText] = useState(
-    "Ingredients: Wheat flour (maida), Sugar, Partially hydrogenated oil, Salt, Sodium benzoate, Natural flavour, Emulsifiers (soy lecithin)"
-  );
-  const [results, setResults] = useState([]);
   const [status, setStatus] = useState("");
+  const [results, setResults] = useState([]);
+  const [ocrDebug, setOcrDebug] = useState("");
+  
+  const fileInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
 
-  function parseIngredients(text) {
-    if (!text) return [];
-    text = text.replace(/ingredients[:\-\s]*/i, "").replace(/\r?\n/g, ", ");
-    const raw = text.split(/[,;•\n]+/).map(s => s.trim()).filter(Boolean);
-    return raw.map(s =>
-      s.replace(/\b\d+(\.\d+)?\s?(g|mg|%)\b/gi, "").replace(/\(.*?\)/g, "").trim()
-    ).filter(Boolean);
-  }
-
-  function colorForCategory(cat) {
-    if (!cat) return "gray";
-    if (cat.includes("Banned") || cat.includes("Regulated") || cat.includes("TransFat")) return "red";
-    if (cat.includes("Artificial") || cat.includes("Preservative") || cat.includes("Added") || cat.includes("Processed")) return "orange";
-    if (cat.includes("Natural") || cat.includes("Oil") || cat.includes("Protein") || cat.includes("Dairy")) return "green";
-    return "gray";
-  }
-
-  async function runOCR() {
-    if (!image) {
-      alert("Please select an image first.");
-      return;
+  // Check if text looks like an ingredient list
+  function looksLikeIngredientList(text) {
+    const textLower = text.toLowerCase();
+    
+    // Check for common ingredient list patterns
+    const patterns = [
+      /coating.*\d+%/i, // "coating (35%)"
+      /(sugar|salt|milk|cocoa|flour|water|oil)/i, // Common ingredients
+      /contains.*milk|soy|peanut|wheat/i, // Allergen statements
+      /may contain/i,
+      /\d+%.*:\s*[A-Z]/i, // Percentage format like "35%: Sugar"
+    ];
+    
+    let matches = 0;
+    for (const pattern of patterns) {
+      if (pattern.test(textLower)) matches++;
     }
-    setStatus("Running OCR...");
-    const { data } = await Tesseract.recognize(image, "eng");
-    setOcrText(data.text);
-    setStatus("OCR done (you can edit text below).");
+    
+    // If 2+ patterns match, likely an ingredient list
+    return matches >= 2;
   }
 
-  function matchIngredient(token) {
-    const q = token.toLowerCase().trim();
-    for (const item of curated) if (item.name === q) return { item, score: 1.0 };
-    const res = fuse.search(q);
-    if (res.length) {
-      const top = res[0];
-      return { item: top.item, score: 1 - (top.score || 0) };
+  async function handleImageCapture(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const imgUrl = URL.createObjectURL(file);
+    setImage(imgUrl);
+    setStatus("🔍 Running OCR... please wait.");
+    setResults([]);
+    setOcrDebug("");
+
+    try {
+      const { data } = await Tesseract.recognize(file, "eng", {
+        tessedit_pageseg_mode: Tesseract.PSM.AUTO,
+      });
+
+      const text = data.text;
+      setOcrDebug(text);
+      console.log("OCR text:", text);
+
+      // Check for "ingredient" keyword OR ingredient list patterns
+      const textLower = text.toLowerCase();
+      const hasIngredientKeyword = 
+        textLower.includes("ingredient") ||
+        textLower.includes("ingredients");
+      
+      const hasIngredientPattern = looksLikeIngredientList(text);
+
+      console.log("Detection results:");
+      console.log("- Has 'ingredient' keyword:", hasIngredientKeyword);
+      console.log("- Looks like ingredient list:", hasIngredientPattern);
+
+      if (hasIngredientKeyword || hasIngredientPattern) {
+        setStatus("✅ Ingredient list detected! Uploading to n8n...");
+
+const formData = new FormData();
+formData.append('data', file, file.name);
+
+const res = await fetch("https://ajitraner.app.n8n.cloud/webhook-test/ingredient-ocr", {
+  method: "POST",
+  body: formData,
+});
+
+        debugger;
+
+        if (!res.ok) {
+          throw new Error(`Upload failed with status: ${res.status}`);
+        }
+
+        const dataRes = await res.json();
+        console.log("n8n response:", dataRes);
+
+        if (dataRes.valid) {
+          setResults(dataRes.ingredients || []);
+          setStatus("✅ Ingredients parsed successfully!");
+        } else {
+          setResults([]);
+          setStatus("⚠️ Image processed, but no valid ingredient list found.");
+        }
+      } else {
+        setStatus("🚫 No ingredient list detected — image looks invalid.");
+      }
+    } catch (err) {
+      console.error("OCR Error:", err);
+      setStatus("❌ Error processing image: " + err.message);
     }
-    return null;
-  }
-
-  function runAnalysis() {
-    const arr = parseIngredients(ocrText);
-    const mapped = arr.map(t => {
-      const match = matchIngredient(t);
-      return {
-        ingredient: t,
-        matched: match ? match.item.name : "—",
-        category: match ? match.item.category : "Unknown",
-        notes: match
-          ? `${match.item.notes || ""} (confidence ${(match.score * 100).toFixed(0)}%)`
-          : "Not in curated DB — mark for review",
-        color: colorForCategory(match ? match.item.category : null),
-      };
-    });
-    setResults(mapped);
   }
 
   return (
-    <div
-      style={{
-        fontFamily: "Inter, Arial, sans-serif",
-        backgroundColor: "#f7f8fb",
-        minHeight: "100vh",
-        padding: "32px",
-        color: "#111",
-      }}
-    >
-      <div
-        style={{
-          maxWidth: "900px",
-          margin: "0 auto",
-          background: "#fff",
-          borderRadius: "16px",
-          boxShadow: "0 4px 10px rgba(0,0,0,0.05)",
-          padding: "32px",
-        }}
-      >
-        <h1 style={{ fontSize: "24px", fontWeight: 700, marginBottom: "6px" }}>
-          🧪 Ingredient Categorizer — Hackathon MVP
-        </h1>
-        <p style={{ fontSize: "13px", color: "#555", marginBottom: "24px" }}>
-          Upload an ingredient list photo → OCR → Parsed ingredients → Match against curated DB → Categorized results.
-        </p>
+    <div className="min-h-screen bg-gray-50 text-gray-900 flex flex-col items-center p-6">
+      <h1 className="text-2xl font-bold mb-4">🧪 Ingredient Detector</h1>
+      <p className="text-sm text-gray-600 mb-4">
+        Capture or upload a food label. It will only upload to n8n if "Ingredient" is found.
+      </p>
 
-        {/* Controls */}
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: "12px",
-            alignItems: "center",
-            marginBottom: "24px",
-          }}
+      {/* Two separate options: Camera and File Upload */}
+      <div className="flex flex-col sm:flex-row gap-3 mb-6 " style={{display: "flex", justifyContent: "space-around", flexWrap: "wrap"}}>
+        <div style={{display:"flex", flexDirection: "column"}}>
+                  {/* Capture Photo Button */}
+        <button
+          onClick={() => cameraInputRef.current?.click()}
+          className="flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 transition font-medium"
+          style={{marginBottom: "20px"}}
         >
-          <input
-            type="file"
-            accept="image/*"
-            onChange={(e) => setImage(URL.createObjectURL(e.target.files[0]))}
-            style={{
-              padding: "8px",
-              border: "1px solid #ddd",
-              borderRadius: "8px",
-              background: "#fafafa",
-              cursor: "pointer",
-              flex: "1",
-            }}
-          />
-          <button
-            onClick={runOCR}
-            style={{
-              background: "#007bff",
-              color: "#fff",
-              padding: "8px 16px",
-              borderRadius: "8px",
-              border: "none",
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
+          <svg 
+            className="w-5 h-5" 
+            fill="none" 
+            stroke="currentColor" 
+            viewBox="0 0 24 24"
           >
-            Run OCR
-          </button>
-          <button
-            onClick={() => runAnalysis()}
-            style={{
-              background: "#28a745",
-              color: "#fff",
-              padding: "8px 16px",
-              borderRadius: "8px",
-              border: "none",
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
-            Analyze
-          </button>
-          <span style={{ fontSize: "12px", color: "#777" }}>{status}</span>
-        </div>
-
-        {/* Image Preview */}
-        {image && (
-          <div style={{ textAlign: "center", marginBottom: "24px" }}>
-            <img
-              src={image}
-              alt="preview"
-              style={{
-                maxWidth: "100%",
-                borderRadius: "12px",
-                boxShadow: "0 2px 6px rgba(0,0,0,0.08)",
-              }}
+            <path 
+              strokeLinecap="round" 
+              strokeLinejoin="round" 
+              strokeWidth={2} 
+              d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" 
             />
-          </div>
-        )}
-
-        {/* OCR Section */}
-        <h3 style={{ fontSize: "16px", fontWeight: 600, marginBottom: "8px" }}>
-          📝 OCR Text (edit if needed)
-        </h3>
-        <textarea
-          value={ocrText}
-          onChange={(e) => setOcrText(e.target.value)}
-          style={{
-            width: "100%",
-            height: "100px",
-            padding: "10px",
-            borderRadius: "8px",
-            border: "1px solid #ddd",
-            fontFamily: "inherit",
-            fontSize: "14px",
-            marginBottom: "24px",
-          }}
-        />
-
-        {/* Results Table */}
-        <h3 style={{ fontSize: "16px", fontWeight: 600, marginBottom: "8px" }}>
-          🧩 Parsed Ingredients & Categories
-        </h3>
-        <div style={{ overflowX: "auto" }}>
-          <table
-            style={{
-              width: "100%",
-              borderCollapse: "collapse",
-              fontSize: "14px",
-            }}
+            <path 
+              strokeLinecap="round" 
+              strokeLinejoin="round" 
+              strokeWidth={2} 
+              d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" 
+            />
+          </svg>
+          📸 Capture Photo
+        </button>
+              {/* Hidden file inputs */}
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={handleImageCapture}
+        className="hidden"
+      />
+        </div>
+<div style={{display:"flex", flexDirection: "column"}}>
+   {/* Choose File Button */}
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          className="flex items-center justify-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg shadow-md hover:bg-green-700 transition font-medium"
+          style={{marginBottom: "20px"}}
+        >
+          <svg 
+            className="w-5 h-5" 
+            fill="none" 
+            stroke="currentColor" 
+            viewBox="0 0 24 24"
           >
+            <path 
+              strokeLinecap="round" 
+              strokeLinejoin="round" 
+              strokeWidth={2} 
+              d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" 
+            />
+          </svg>
+          📁 Choose File
+        </button>
+              <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleImageCapture}
+        className="hidden"
+      />
+</div>
+      
+      </div>
+
+
+      {status && (
+        <p className="text-sm mb-4 font-medium">{status}</p>
+      )}
+{/* 
+      {image && (
+        <div className="w-full max-w-md mb-6">
+          <img 
+            src={image} 
+            alt="preview" 
+            className="rounded-lg shadow-md w-full" 
+          />
+        </div>
+      )} */}
+
+      {/* {ocrDebug && (
+        <div className="w-full max-w-2xl bg-gray-100 rounded-lg shadow-md p-4 mb-6">
+          <h2 className="text-lg font-semibold mb-2">🐛 OCR Debug Output</h2>
+          <pre className="text-xs whitespace-pre-wrap bg-white p-3 rounded border overflow-x-auto max-h-64">
+            {ocrDebug}
+          </pre>
+        </div>
+      )} */}
+
+      {results.length > 0 && (
+        <div className="w-full max-w-lg bg-white rounded-xl shadow-md p-4">
+          <h2 className="text-lg font-semibold mb-3">📋 Parsed Ingredients</h2>
+          <table className="w-full text-sm border-collapse">
             <thead>
-              <tr
-                style={{
-                  background: "#f0f2f5",
-                  textAlign: "left",
-                }}
-              >
-                <th style={{ padding: "10px", fontWeight: 600 }}>Ingredient</th>
-                <th style={{ padding: "10px", fontWeight: 600 }}>Matched Canonical</th>
-                <th style={{ padding: "10px", fontWeight: 600 }}>Category</th>
-                <th style={{ padding: "10px", fontWeight: 600 }}>Notes</th>
+              <tr className="bg-gray-100">
+                <th className="border p-2 text-left">#</th>
+                <th className="border p-2 text-left">Ingredient</th>
               </tr>
             </thead>
             <tbody>
-              {results.length === 0 ? (
-                <tr>
-                  <td
-                    colSpan="4"
-                    style={{
-                      textAlign: "center",
-                      padding: "20px",
-                      color: "#777",
-                      fontSize: "13px",
-                    }}
-                  >
-                    No ingredients parsed yet.
-                  </td>
+              {results.map((ing, i) => (
+                <tr key={i} className="hover:bg-gray-50">
+                  <td className="border p-2">{i + 1}</td>
+                  <td className="border p-2">{ing}</td>
                 </tr>
-              ) : (
-                results.map((r, i) => (
-                  <tr
-                    key={i}
-                    style={{
-                      borderBottom: "1px solid #eee",
-                      backgroundColor: i % 2 === 0 ? "#fff" : "#fafafa",
-                    }}
-                  >
-                    <td style={{ padding: "10px" }}>{r.ingredient}</td>
-                    <td style={{ padding: "10px" }}>{r.matched}</td>
-                    <td style={{ padding: "10px" }}>
-                      <span
-                        style={{
-                          display: "inline-block",
-                          padding: "6px 10px",
-                          borderRadius: "12px",
-                          fontWeight: 600,
-                          background:
-                            r.color === "green"
-                              ? "#2ecc71"
-                              : r.color === "orange"
-                              ? "#f39c12"
-                              : r.color === "red"
-                              ? "#e74c3c"
-                              : "#95a5a6",
-                          color: "#fff",
-                        }}
-                      >
-                        {r.category}
-                      </span>
-                    </td>
-                    <td style={{ padding: "10px", color: "#555" }}>{r.notes}</td>
-                  </tr>
-                ))
-              )}
+              ))}
             </tbody>
           </table>
         </div>
-      </div>
+      )}
     </div>
   );
 }
